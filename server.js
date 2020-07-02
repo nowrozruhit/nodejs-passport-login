@@ -1,4 +1,4 @@
-if(process.env.NODE_ENV !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
     require('dotenv').config();
 }
 
@@ -8,20 +8,30 @@ const bcrypt = require('bcrypt');
 const passport = require('passport');
 const session = require('express-session');
 const flash = require('express-flash');
-const methodOverride = require('method-override'); 
+const methodOverride = require('method-override');
+const mongoose = require('mongoose');
+const _ = require('lodash');
 
+const { User, validateUser } = require('./models/user');
 const initializePassport = require('./passport-config');
 initializePassport(
     passport,
-    email => users.find(user => user.email === email),
-    id => users.find(user  => user.id === id)
+    async (email) => {
+        const user = await User.findOne({ email });
+        return user;
+    },
+    async (id) => {
+        const user = await User.findById(id);
+        return user;
+    }
 );
 
-const users = [];
+
+// const users = [];
 
 app.set('view-engine', 'ejs');
 
-app.use(express.urlencoded({ extended:false }));
+app.use(express.urlencoded({ extended: false }));
 app.use(flash());
 app.use(session({
     secret: process.env.SESSION_SECRET,
@@ -33,7 +43,7 @@ app.use(passport.session());
 app.use(methodOverride('_method'));
 
 app.get('/', checkAuthenticated, (req, res) => {
-    res.render('index.ejs', {username: req.user.name });
+    res.render('index.ejs', { username: req.user.name });
 });
 
 app.get('/login', checkNotAuthenticated, (req, res) => {
@@ -50,21 +60,31 @@ app.get('/register', checkNotAuthenticated, (req, res) => {
     res.render('register.ejs');
 });
 
-app.post('/register', checkNotAuthenticated, async(req, res) => {
-    try {
-        const hashedPassword = await bcrypt.hash(req.body.password, 10);
+app.post('/register', checkNotAuthenticated, async (req, res) => {
+    // users.push({
+    //     id: Date.now().toString(),
+    //     name: req.body.name,
+    //     email: req.body.email,
+    //     password: hashedPassword
+    // });
 
-        users.push({
-            id: Date.now().toString(),
-            name: req.body.name,
-            email: req.body.email,
-            password: hashedPassword
-        });
-        res.redirect('/login');
-    } catch {
-        res.redirect('/register');
+    const result = validateUser(req.body);
+    if (result.error) {
+        return res.redirect('/register');
     }
-    console.log(users);
+
+    let user = await User.findOne({ email: req.body.email });
+    if (user) {
+        return res.status(400).send('User already registered');
+    }
+
+    user = new User(_.pick(req.body, ['name', 'email', 'password']));
+    const hashedPassword = await bcrypt.hash(req.body.password, 10);
+    user.password = hashedPassword;
+    await user.save();
+
+    res.redirect('/login');
+    //console.log(users);
 });
 
 app.delete('/logout', (req, res) => {
@@ -73,7 +93,7 @@ app.delete('/logout', (req, res) => {
 });
 
 function checkAuthenticated(req, res, next) {
-    if(req.isAuthenticated()){
+    if (req.isAuthenticated()) {
         return next();
     }
 
@@ -81,12 +101,18 @@ function checkAuthenticated(req, res, next) {
 }
 
 function checkNotAuthenticated(req, res, next) {
-    if(req.isAuthenticated()){
+    if (req.isAuthenticated()) {
         return res.redirect('/');
     }
 
     next();
 }
+
+mongoose.connect("mongodb://localhost/passport-login-user-database", {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    useCreateIndex: true
+}).then(() => console.log('Connected to MongoDB'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
